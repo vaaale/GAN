@@ -1,7 +1,8 @@
 import tensorflow as tf
 from tensorflow.contrib.keras.python.keras import Input
 from tensorflow.contrib.keras.python.keras.models import Model
-from tensorflow.contrib.keras.python.keras.layers import Dense, Activation, concatenate
+from tensorflow.contrib.keras.python.keras.layers import Dense, Activation, concatenate, Convolution2D, UpSampling2D, \
+    Flatten, Reshape
 from tensorflow.examples.tutorials.mnist import input_data
 import numpy as np
 import matplotlib.pyplot as plt
@@ -41,7 +42,7 @@ def discriminator(X_dim, y_dim):
 """ Generator Net model """
 
 
-def generator(Z_dim, y_dim):
+def dense_generator(Z_dim, y_dim):
     z_in = Input(shape=(Z_dim,), name='Z_input')
     y_in = Input(shape=(y_dim,), name='y_input')
     inputs = concatenate([z_in, y_in])
@@ -49,6 +50,23 @@ def generator(Z_dim, y_dim):
     G_prob = Dense(X_dim, activation='sigmoid')(G_h1)
 
     G = Model(inputs=[z_in, y_in], outputs=G_prob)
+
+    return G
+
+
+def generator(Z_dim, y_dim):
+    z_in = Input(shape=(Z_dim,), name='Z_input')
+    y_in = Input(shape=(y_dim,), name='y_input')
+    inputs = concatenate([z_in, y_in])
+    G_h1 = Dense(100*14*14, activation='relu')(inputs)
+    G_reshaped = Reshape(target_shape=(14, 14, 100))(G_h1)
+    G_up = UpSampling2D(size=(2, 2))(G_reshaped)
+    G_c1 = Convolution2D(50, kernel_size=(2, 2), padding='same', activation='relu')(G_up)
+    G_c2 = Convolution2D(1, kernel_size=(1, 1), padding='same', activation='sigmoid')(G_c1)
+    G_prob = Flatten()(G_c2)
+
+    G = Model(inputs=[z_in, y_in], outputs=G_prob)
+    G.summary()
 
     return G
 
@@ -97,37 +115,41 @@ D_solver = tf.train.AdamOptimizer().minimize(D_loss, var_list=theta_D)
 G_solver = tf.train.AdamOptimizer().minimize(G_loss, var_list=theta_G)
 
 
-sess = tf.Session()
-sess.run(tf.global_variables_initializer())
+with tf.device('/gpu:0'):
+    sess = tf.Session()
+    sess.run(tf.global_variables_initializer())
 
 if not os.path.exists('out/'):
     os.makedirs('out/')
 
 i = 0
-with tf.device('/gpu:0'):
+for it in range(1000000):
+    if it % 1000 == 0:
+        n_sample = 16
 
-    for it in range(1000000):
-        if it % 1000 == 0:
-            n_sample = 16
+        Z_sample = sample_Z(n_sample, Z_dim)
+        y_sample = np.zeros(shape=[n_sample, y_dim])
+        # y_sample[:, 7] = 1
+        # TODO: Make this elegant!!
+        for row in range(y_sample.shape[0]):
+            ind = np.random.randint(0, y_dim)
+            y_sample[row, ind] = 1
 
-            Z_sample = sample_Z(n_sample, Z_dim)
-            y_sample = np.zeros(shape=[n_sample, y_dim])
-            y_sample[:, 7] = 1
-            samples = sess.run(G_sample, feed_dict={Z: Z_sample, y:y_sample})
+        samples = sess.run(G_sample, feed_dict={Z: Z_sample, y:y_sample})
 
-            fig = plot(samples)
-            plt.savefig('out/{}.png'.format(str(i).zfill(3)), bbox_inches='tight')
-            i += 1
-            plt.close(fig)
+        fig = plot(samples)
+        plt.savefig('out/{}.png'.format(str(i).zfill(3)), bbox_inches='tight')
+        i += 1
+        plt.close(fig)
 
-        X_mb, y_mb = mnist.train.next_batch(mb_size)
+    X_mb, y_mb = mnist.train.next_batch(mb_size)
 
-        Z_sample = sample_Z(mb_size, Z_dim)
-        _, D_loss_curr = sess.run([D_solver, D_loss], feed_dict={X: X_mb, Z: Z_sample, y:y_mb})
-        _, G_loss_curr = sess.run([G_solver, G_loss], feed_dict={Z: Z_sample, y:y_mb})
+    Z_sample = sample_Z(mb_size, Z_dim)
+    _, D_loss_curr = sess.run([D_solver, D_loss], feed_dict={X: X_mb, Z: Z_sample, y:y_mb})
+    _, G_loss_curr = sess.run([G_solver, G_loss], feed_dict={Z: Z_sample, y:y_mb})
 
-        if it % 1000 == 0:
-            print('Iter: {}'.format(it))
-            print('D loss: {:.4}'. format(D_loss_curr))
-            print('G_loss: {:.4}'.format(G_loss_curr))
-            print()
+    if it % 1000 == 0:
+        print('Iter: {}'.format(it))
+        print('D loss: {:.4}'. format(D_loss_curr))
+        print('G_loss: {:.4}'.format(G_loss_curr))
+        print()
