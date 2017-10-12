@@ -129,8 +129,8 @@ for it in range(1000000):
 
         Z_sample = sample_Z(n_sample, Z_dim)
         y_sample = np.zeros(shape=[n_sample, y_dim])
-        # y_sample[:, 7] = 1
-        # TODO: Make this elegant!!
+        y_sample[range(n_sample), np.random.randint(0, 10)] = 1
+
         for row in range(y_sample.shape[0]):
             ind = np.random.randint(0, y_dim)
             y_sample[row, ind] = 1
