@@ -137,13 +137,13 @@ if not os.path.exists('out/'):
     os.makedirs('out/')
 
 i = 0
+n_sample = 16
 for it in range(1000000):
     if it % 1000 == 0:
-        n_sample = 16
 
         Z_sample = sample_Z(n_sample, Z_dim)
         y_sample = np.zeros(shape=[n_sample, y_dim])
-        y_sample[range(n_sample), np.random.randint(0, 10)] = 1
+        y_sample[range(n_sample), np.random.randint(0, 10, n_sample)] = 1
 
         samples = sess.run(G_sample, feed_dict={Z: Z_sample, y:y_sample})
 
