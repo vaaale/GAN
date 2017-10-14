@@ -13,7 +13,8 @@ import os
 mnist = input_data.read_data_sets('../../MNIST_data', one_hot=True)
 mb_size = 64
 Z_dim = 100
-X_dim = mnist.train.images.shape[1]
+# X_dim = mnist.train.images.shape[1]
+X_dim = (28, 28, 1)
 y_dim = mnist.train.labels.shape[1]
 h_dim = 128
 
@@ -28,16 +29,29 @@ def xavier_init(size):
 
 
 def discriminator(X_dim, y_dim):
-    x_in = Input(shape=(X_dim,), name='X_input')
+    x_in = Input(shape=(X_dim), name='X_input')
     y_in = Input(shape=(y_dim,), name='Y_input')
-    inputs = concatenate([x_in, y_in])
-    D_h1 = Dense(h_dim, activation='relu')(inputs)
-    D_logit = Dense(1)(D_h1)
-
+    D_h1 = Convolution2D(50, kernel_size=(2, 2), padding='same', activation='relu')(x_in)
+    D_h2 = Convolution2D(50, kernel_size=(2, 2), padding='same', activation='relu')(D_h1)
+    D_f = Flatten()(D_h2)
+    merge = concatenate([D_f, y_in])
+    D_d1 = Dense(100, activation='relu')(merge)
+    D_logit = Dense(1)(D_d1)
     D = Model(inputs=[x_in, y_in], outputs=D_logit)
 
     return D
 
+# def discriminator(X_dim, y_dim):
+#     x_in = Input(shape=(X_dim,), name='X_input')
+#     y_in = Input(shape=(y_dim,), name='Y_input')
+#     inputs = concatenate([x_in, y_in])
+#     D_h1 = Dense(h_dim, activation='relu')(inputs)
+#     D_logit = Dense(1)(D_h1)
+#
+#     D = Model(inputs=[x_in, y_in], outputs=D_logit)
+#
+#     return D
+#
 
 """ Generator Net model """
 
@@ -62,8 +76,8 @@ def generator(Z_dim, y_dim):
     G_reshaped = Reshape(target_shape=(14, 14, 100))(G_h1)
     G_up = UpSampling2D(size=(2, 2))(G_reshaped)
     G_c1 = Convolution2D(50, kernel_size=(2, 2), padding='same', activation='relu')(G_up)
-    G_c2 = Convolution2D(1, kernel_size=(1, 1), padding='same', activation='sigmoid')(G_c1)
-    G_prob = Flatten()(G_c2)
+    G_prob = Convolution2D(1, kernel_size=(1, 1), padding='same', activation='sigmoid')(G_c1)
+    # G_prob = Flatten()(G_c2)
 
     G = Model(inputs=[z_in, y_in], outputs=G_prob)
     G.summary()
@@ -91,7 +105,7 @@ def plot(samples):
     return fig
 
 """ Input placeholders """
-X = tf.placeholder(tf.float32, shape=[None, 784])
+X = tf.placeholder(tf.float32, shape=[None, 28, 28, 1])
 y = tf.placeholder(tf.float32, shape=[None, y_dim])
 Z = tf.placeholder(tf.float32, shape=[None, Z_dim])
 
@@ -131,10 +145,6 @@ for it in range(1000000):
         y_sample = np.zeros(shape=[n_sample, y_dim])
         y_sample[range(n_sample), np.random.randint(0, 10)] = 1
 
-        for row in range(y_sample.shape[0]):
-            ind = np.random.randint(0, y_dim)
-            y_sample[row, ind] = 1
-
         samples = sess.run(G_sample, feed_dict={Z: Z_sample, y:y_sample})
 
         fig = plot(samples)
@@ -143,6 +153,7 @@ for it in range(1000000):
         plt.close(fig)
 
     X_mb, y_mb = mnist.train.next_batch(mb_size)
+    X_mb = X_mb.reshape(-1, 28, 28, 1)
 
     Z_sample = sample_Z(mb_size, Z_dim)
     _, D_loss_curr = sess.run([D_solver, D_loss], feed_dict={X: X_mb, Z: Z_sample, y:y_mb})
