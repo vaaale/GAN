@@ -1,3 +1,7 @@
+import matplotlib
+# Force matplotlib to not use any Xwindows backend.
+matplotlib.use('Agg')
+
 import tensorflow.contrib.keras.api.keras.backend as K
 import tensorflow as tf
 from tensorflow.contrib.keras.python.keras import Input
@@ -10,6 +14,7 @@ from tensorflow.contrib.keras.python.keras.preprocessing.image import ImageDataG
 from tensorflow.contrib.keras.python.keras.utils import to_categorical
 from tensorflow.examples.tutorials.mnist import input_data
 import numpy as np
+
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 import os
@@ -25,6 +30,10 @@ X_dim = (32, 32, 3)
 y_dim = 10
 h_dim = 128
 
+logs_path = 'logs'
+if not os.path.isdir(logs_path):
+    os.makedirs(logs_path)
+
 K.set_learning_phase(True)
 
 def xavier_init(size):
@@ -37,10 +46,9 @@ def xavier_init(size):
 def discriminator(X_dim, y_dim):
     x_in = Input(shape=(X_dim), name='X_input')
     y_in = Input(shape=(y_dim,), name='Y_input')
-    D_h = Activation('relu')(Convolution2D(128, kernel_size=(5, 5), padding='same')(x_in))
+    D_h = Activation('relu')(BatchNormalization()(Convolution2D(64, kernel_size=(5, 5), padding='same')(x_in)))
     D_h = Activation('relu')(BatchNormalization()(Convolution2D(128, kernel_size=(5, 5), padding='same')(D_h)))
     D_h = Activation('relu')(BatchNormalization()(Convolution2D(256, kernel_size=(5, 5), padding='same')(D_h)))
-    D_h = Activation('relu')(BatchNormalization()(Convolution2D(512, kernel_size=(5, 5), padding='same')(D_h)))
     D_h = AveragePooling2D(pool_size=(2, 2), padding='valid')(D_h)
     D_h = Flatten()(D_h)
     D_h = concatenate([D_h, y_in])
@@ -57,13 +65,13 @@ def generator(Z_dim, y_dim):
     z_in = Input(shape=(Z_dim,), name='Z_input')
     y_in = Input(shape=(y_dim,), name='y_input')
     inputs = concatenate([z_in, y_in])
-    G_h = Dense(1024 * 32 * 32, activation='relu')(inputs)
-    G_h = Reshape(target_shape=(32, 32, 1024))(G_h)
-    # G_h = UpSampling2D(size=(2, 2))(G_h)
-    G_h = Activation('relu')(BatchNormalization()(Convolution2D(512, kernel_size=(5, 5), padding='same')(G_h)))
+    G_h = Dense(100 * 16 * 16, activation='relu')(inputs)
+    G_h = Reshape(target_shape=(16, 16, 100))(G_h)
+    G_h = UpSampling2D(size=(2, 2))(G_h)
     G_h = Activation('relu')(BatchNormalization()(Convolution2D(256, kernel_size=(5, 5), padding='same')(G_h)))
     G_h = Activation('relu')(BatchNormalization()(Convolution2D(128, kernel_size=(5, 5), padding='same')(G_h)))
     G_h = Activation('relu')(BatchNormalization()(Convolution2D(64, kernel_size=(5, 5), padding='same')(G_h)))
+    # G_h = Activation('relu')(BatchNormalization()(Convolution2D(64, kernel_size=(5, 5), padding='same')(G_h)))
     G_prob = Convolution2D(3, kernel_size=(1, 1), padding='same', activation='sigmoid')(G_h)
 
     G = Model(inputs=[z_in, y_in], outputs=G_prob, name='Generator')
@@ -119,12 +127,17 @@ G_loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=D_logit_f
 D_solver = tf.train.AdamOptimizer().minimize(D_loss, var_list=theta_D)
 G_solver = tf.train.AdamOptimizer().minimize(G_loss, var_list=theta_G)
 
+tf.summary.scalar("D_loss", D_loss)
+tf.summary.scalar("G_loss", G_loss)
+write_op = tf.summary.merge_all()
+
 with tf.device('/gpu:0'):
     sess = tf.Session()
     sess.run(tf.global_variables_initializer())
 
 if not os.path.exists('out/'):
     os.makedirs('out/')
+
 
 datagen = ImageDataGenerator(
     featurewise_center=False,  # set input mean to 0 over the dataset
@@ -142,9 +155,13 @@ datagen.fit(x_train)
 
 gen = datagen.flow(x_train, y_train, batch_size=mb_size)
 
+D_loss_writer = tf.summary.FileWriter(logs_path+'/D_loss', graph=tf.get_default_graph())
+# G_loss_writer = tf.summary.FileWriter(logs_path+'/G_loss', graph=tf.get_default_graph())
+
+
 i = 0
-for it in range(1000000):
-    if it % 1000 == 0:
+for it in range(100000):
+    if it % 100 == 0:
         n_sample = 16
         Z_sample = sample_Z(n_sample, Z_dim)
         y_sample = np.zeros(shape=[n_sample, y_dim])
@@ -165,10 +182,14 @@ for it in range(1000000):
     y_mb = to_categorical(y_mb, num_classes=y_dim)
 
     Z_sample = sample_Z(X_mb.shape[0], Z_dim)
-    _, D_loss_curr = sess.run([D_solver, D_loss], feed_dict={X: X_mb, Z: Z_sample, y: y_mb})
+    _, D_loss_curr, D_summary = sess.run([D_solver, D_loss, write_op], feed_dict={X: X_mb, Z: Z_sample, y: y_mb})
     _, G_loss_curr = sess.run([G_solver, G_loss], feed_dict={Z: Z_sample, y: y_mb})
+    D_loss_writer.add_summary(D_summary)
+    # G_loss_writer.add_summary(G_summary)
+    D_loss_writer.flush()
+    # G_loss.flush()
 
-    if it % 1000 == 0:
+    if it % 100 == 0:
         print('Iter: {}'.format(it))
         print('D loss: {:.4}'.format(D_loss_curr))
         print('G_loss: {:.4}'.format(G_loss_curr))
