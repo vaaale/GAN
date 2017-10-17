@@ -34,6 +34,9 @@ logs_path = 'logs'
 if not os.path.isdir(logs_path):
     os.makedirs(logs_path)
 
+if not os.path.exists('out/'):
+    os.makedirs('out/')
+
 K.set_learning_phase(True)
 
 def xavier_init(size):
@@ -127,16 +130,16 @@ G_loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=D_logit_f
 D_solver = tf.train.AdamOptimizer().minimize(D_loss, var_list=theta_D)
 G_solver = tf.train.AdamOptimizer().minimize(G_loss, var_list=theta_G)
 
-tf.summary.scalar("D_loss", D_loss)
-tf.summary.scalar("G_loss", G_loss)
+
+log_var = tf.Variable(0.0)
+tf.summary.scalar("loss", log_var)
+# tf.summary.scalar("D_loss", D_loss)
+# tf.summary.scalar("G_loss", G_loss)
 write_op = tf.summary.merge_all()
 
 with tf.device('/gpu:0'):
     sess = tf.Session()
     sess.run(tf.global_variables_initializer())
-
-if not os.path.exists('out/'):
-    os.makedirs('out/')
 
 
 datagen = ImageDataGenerator(
@@ -155,8 +158,8 @@ datagen.fit(x_train)
 
 gen = datagen.flow(x_train, y_train, batch_size=mb_size)
 
-D_loss_writer = tf.summary.FileWriter(logs_path+'/D_loss', graph=tf.get_default_graph())
-# G_loss_writer = tf.summary.FileWriter(logs_path+'/G_loss', graph=tf.get_default_graph())
+writer_1 = tf.summary.FileWriter(logs_path+'/D_loss', graph=tf.get_default_graph())
+writer_2 = tf.summary.FileWriter(logs_path+'/G_loss', graph=tf.get_default_graph())
 
 
 i = 0
@@ -174,21 +177,19 @@ for it in range(100000):
         i += 1
         plt.close(fig)
 
-    # X_mb, y_mb = mnist.train.next_batch(mb_size)
-    # X_mb = X_mb.reshape(-1, 32, 32, 3)
     X_mb, y_mb = next(gen)
-    # print('X_mb: {}'.format(X_mb.shape))
-    # print('y_mb: {}'.format(y_mb.shape))
     y_mb = to_categorical(y_mb, num_classes=y_dim)
 
     Z_sample = sample_Z(X_mb.shape[0], Z_dim)
-    _, D_loss_curr, D_summary = sess.run([D_solver, D_loss, write_op], feed_dict={X: X_mb, Z: Z_sample, y: y_mb})
+    _, D_loss_curr = sess.run([D_solver, D_loss], feed_dict={X: X_mb, Z: Z_sample, y: y_mb})
     _, G_loss_curr = sess.run([G_solver, G_loss], feed_dict={Z: Z_sample, y: y_mb})
-    D_loss_writer.add_summary(D_summary)
-    # G_loss_writer.add_summary(G_summary)
-    D_loss_writer.flush()
-    # G_loss.flush()
 
+    summary = sess.run(write_op, {log_var: D_loss_curr})
+    writer_1.add_summary(summary, it)
+    writer_1.flush()
+    summary = sess.run(write_op, {log_var: G_loss_curr})
+    writer_2.add_summary(summary, it)
+    writer_2.flush()
     if it % 100 == 0:
         print('Iter: {}'.format(it))
         print('D loss: {:.4}'.format(D_loss_curr))
