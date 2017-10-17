@@ -8,7 +8,7 @@ from tensorflow.contrib.keras.python.keras import Input
 from tensorflow.contrib.keras.python.keras.datasets import cifar10
 from tensorflow.contrib.keras.python.keras.models import Model
 from tensorflow.contrib.keras.python.keras.layers import Dense, Activation, concatenate, Convolution2D, UpSampling2D, \
-    Flatten, Reshape, AveragePooling2D
+    Flatten, Reshape, AveragePooling2D, add, initializers
 from tensorflow.contrib.keras.python.keras.layers.normalization import BatchNormalization
 from tensorflow.contrib.keras.python.keras.preprocessing.image import ImageDataGenerator
 from tensorflow.contrib.keras.python.keras.utils import to_categorical
@@ -39,19 +39,15 @@ if not os.path.exists('out/'):
 
 K.set_learning_phase(True)
 
-def xavier_init(size):
-    in_dim = size[0]
-    xavier_stddev = 1. / tf.sqrt(in_dim / 2.)
-    return tf.random_normal(shape=size, stddev=xavier_stddev)
-
 
 # Discriminator Net model
 def discriminator(X_dim, y_dim):
     x_in = Input(shape=(X_dim), name='X_input')
     y_in = Input(shape=(y_dim,), name='Y_input')
-    D_h = Activation('relu')(BatchNormalization()(Convolution2D(64, kernel_size=(5, 5), padding='same')(x_in)))
-    D_h = Activation('relu')(BatchNormalization()(Convolution2D(128, kernel_size=(5, 5), padding='same')(D_h)))
-    D_h = Activation('relu')(BatchNormalization()(Convolution2D(256, kernel_size=(5, 5), padding='same')(D_h)))
+    D_h = Activation('relu')((Convolution2D(128, kernel_size=(5, 5), padding='same')(x_in)))
+    D_h = Activation('relu')(BatchNormalization()(Convolution2D(256, kernel_size=(5, 5), padding='same', kernel_initializer=initializers.TruncatedNormal(stddev=0.02))(D_h)))
+    D_h = Activation('relu')(BatchNormalization()(Convolution2D(512, kernel_size=(5, 5), padding='same', kernel_initializer=initializers.TruncatedNormal(stddev=0.02))(D_h)))
+    D_h = Activation('relu')(BatchNormalization()(Convolution2D(1024, kernel_size=(5, 5), padding='same', kernel_initializer=initializers.TruncatedNormal(stddev=0.02))(D_h)))
     D_h = AveragePooling2D(pool_size=(2, 2), padding='valid')(D_h)
     D_h = Flatten()(D_h)
     D_h = concatenate([D_h, y_in])
@@ -71,11 +67,11 @@ def generator(Z_dim, y_dim):
     G_h = Dense(100 * 16 * 16, activation='relu')(inputs)
     G_h = Reshape(target_shape=(16, 16, 100))(G_h)
     G_h = UpSampling2D(size=(2, 2))(G_h)
-    G_h = Activation('relu')(BatchNormalization()(Convolution2D(256, kernel_size=(5, 5), padding='same')(G_h)))
-    G_h = Activation('relu')(BatchNormalization()(Convolution2D(128, kernel_size=(5, 5), padding='same')(G_h)))
-    G_h = Activation('relu')(BatchNormalization()(Convolution2D(64, kernel_size=(5, 5), padding='same')(G_h)))
-    # G_h = Activation('relu')(BatchNormalization()(Convolution2D(64, kernel_size=(5, 5), padding='same')(G_h)))
-    G_prob = Convolution2D(3, kernel_size=(1, 1), padding='same', activation='sigmoid')(G_h)
+    G_h = Activation('relu')(BatchNormalization()(Convolution2D(512, kernel_size=(5, 5), padding='same', kernel_initializer=initializers.TruncatedNormal(stddev=0.02))(G_h)))
+    G_h = Activation('relu')(BatchNormalization()(Convolution2D(256, kernel_size=(5, 5), padding='same', kernel_initializer=initializers.TruncatedNormal(stddev=0.02))(G_h)))
+    G_h = Activation('relu')(BatchNormalization()(Convolution2D(128, kernel_size=(5, 5), padding='same', kernel_initializer=initializers.TruncatedNormal(stddev=0.02))(G_h)))
+    G_h = Activation('relu')(BatchNormalization()(Convolution2D(64, kernel_size=(5, 5), padding='same', kernel_initializer=initializers.TruncatedNormal(stddev=0.02))(G_h)))
+    G_prob = Convolution2D(3, kernel_size=(3, 3), padding='same')(G_h)
 
     G = Model(inputs=[z_in, y_in], outputs=G_prob, name='Generator')
     print('=== Generator ===')
@@ -120,15 +116,13 @@ G_sample = G_m([Z, y])
 D_logit_real = D_m([X, y])
 D_logit_fake = D_m([G_sample, y])
 
-D_loss_real = tf.reduce_mean(
-    tf.nn.sigmoid_cross_entropy_with_logits(logits=D_logit_real, labels=tf.ones_like(D_logit_real)))
-D_loss_fake = tf.reduce_mean(
-    tf.nn.sigmoid_cross_entropy_with_logits(logits=D_logit_fake, labels=tf.zeros_like(D_logit_fake)))
+D_loss_real = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=D_logit_real, labels=tf.ones_like(D_logit_real)))
+D_loss_fake = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=D_logit_fake, labels=tf.zeros_like(D_logit_fake)))
 D_loss = D_loss_real + D_loss_fake
 G_loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=D_logit_fake, labels=tf.ones_like(D_logit_fake)))
 
-D_solver = tf.train.AdamOptimizer().minimize(D_loss, var_list=theta_D)
-G_solver = tf.train.AdamOptimizer().minimize(G_loss, var_list=theta_G)
+D_solver = tf.train.AdamOptimizer(learning_rate=0.0002, beta1=0.5).minimize(D_loss,  var_list=theta_D)
+G_solver = tf.train.AdamOptimizer(learning_rate=0.001, beta1=0.5).minimize(G_loss, var_list=theta_G)
 
 
 log_var = tf.Variable(0.0)
@@ -178,19 +172,20 @@ for it in range(100000):
         plt.close(fig)
 
     X_mb, y_mb = next(gen)
-    y_mb = to_categorical(y_mb, num_classes=y_dim)
+    y_mb = to_categorical(y_mb, num_classes=y_dim) * 0.9
 
     Z_sample = sample_Z(X_mb.shape[0], Z_dim)
     _, D_loss_curr = sess.run([D_solver, D_loss], feed_dict={X: X_mb, Z: Z_sample, y: y_mb})
     _, G_loss_curr = sess.run([G_solver, G_loss], feed_dict={Z: Z_sample, y: y_mb})
 
-    summary = sess.run(write_op, {log_var: D_loss_curr})
-    writer_1.add_summary(summary, it)
-    writer_1.flush()
-    summary = sess.run(write_op, {log_var: G_loss_curr})
-    writer_2.add_summary(summary, it)
-    writer_2.flush()
     if it % 100 == 0:
+        summary = sess.run(write_op, {log_var: D_loss_curr})
+        writer_1.add_summary(summary, it)
+        writer_1.flush()
+        summary = sess.run(write_op, {log_var: G_loss_curr})
+        writer_2.add_summary(summary, it)
+        writer_2.flush()
+
         print('Iter: {}'.format(it))
         print('D loss: {:.4}'.format(D_loss_curr))
         print('G_loss: {:.4}'.format(G_loss_curr))
