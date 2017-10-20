@@ -8,7 +8,7 @@ from tensorflow.contrib.keras.python.keras import Input
 from tensorflow.contrib.keras.python.keras.datasets import cifar10
 from tensorflow.contrib.keras.python.keras.models import Model
 from tensorflow.contrib.keras.python.keras.layers import Dense, Activation, concatenate, Convolution2D, UpSampling2D, \
-    Flatten, Reshape, AveragePooling2D, add, initializers
+    Flatten, Reshape, AveragePooling2D, add, initializers, Conv2DTranspose, LeakyReLU
 from tensorflow.contrib.keras.python.keras.layers.normalization import BatchNormalization
 from tensorflow.contrib.keras.python.keras.preprocessing.image import ImageDataGenerator
 from tensorflow.contrib.keras.python.keras.utils import to_categorical
@@ -23,12 +23,15 @@ import os
 
 (x_train, y_train), (x_test, y_test) = cifar10.load_data()
 mb_size = 64
-Z_dim = 200
+Z_dim = 64
 # X_dim = mnist.train.images.shape[1]
 X_dim = (32, 32, 3)
 # y_dim = mnist.train.labels.shape[1]
 y_dim = 10
 h_dim = 128
+
+x_train = x_train / 255.
+x_test = x_test / 255.
 
 logs_path = 'logs'
 if not os.path.isdir(logs_path):
@@ -42,13 +45,13 @@ K.set_learning_phase(True)
 
 # Discriminator Net model
 def discriminator(X_dim, y_dim):
+    df_dim = 64
     x_in = Input(shape=(X_dim), name='X_input')
     y_in = Input(shape=(y_dim,), name='Y_input')
-    D_h = Activation('relu')((Convolution2D(128, kernel_size=(5, 5), padding='same')(x_in)))
-    D_h = Activation('relu')(BatchNormalization()(Convolution2D(256, kernel_size=(5, 5), padding='same', kernel_initializer=initializers.TruncatedNormal(stddev=0.02))(D_h)))
-    D_h = Activation('relu')(BatchNormalization()(Convolution2D(512, kernel_size=(5, 5), padding='same', kernel_initializer=initializers.TruncatedNormal(stddev=0.02))(D_h)))
-    D_h = Activation('relu')(BatchNormalization()(Convolution2D(1024, kernel_size=(5, 5), padding='same', kernel_initializer=initializers.TruncatedNormal(stddev=0.02))(D_h)))
-    D_h = AveragePooling2D(pool_size=(2, 2), padding='valid')(D_h)
+    D_h = LeakyReLU(0.2)(Convolution2D(df_dim, kernel_size=(5, 5), strides=(2, 2), padding='same')(x_in))
+    D_h = LeakyReLU(0.2)(BatchNormalization()(Convolution2D(df_dim*2, kernel_size=(5, 5), strides=(2, 2), padding='same')(D_h)))
+    D_h = LeakyReLU(0.2)(BatchNormalization()(Convolution2D(df_dim*4, kernel_size=(5, 5), strides=(2, 2), padding='same')(D_h)))
+    D_h = LeakyReLU(0.2)(BatchNormalization()(Convolution2D(df_dim*8, kernel_size=(5, 5), strides=(2, 2), padding='same')(D_h)))
     D_h = Flatten()(D_h)
     D_h = concatenate([D_h, y_in])
     D_logit = Dense(1, name='Discriminator_Output')(D_h)
@@ -60,18 +63,20 @@ def discriminator(X_dim, y_dim):
 
 
 # Generator Net model
-def generator(Z_dim, y_dim):
+def generator(Z_dim, y_dim, image_size=32):
+    gf_dim = 64
+    s16 = int(image_size / 16)
+    c_dim = 3
     z_in = Input(shape=(Z_dim,), name='Z_input')
     y_in = Input(shape=(y_dim,), name='y_input')
     inputs = concatenate([z_in, y_in])
-    G_h = Dense(100 * 16 * 16, activation='relu')(inputs)
-    G_h = Reshape(target_shape=(16, 16, 100))(G_h)
-    G_h = UpSampling2D(size=(2, 2))(G_h)
-    G_h = Activation('relu')(BatchNormalization()(Convolution2D(512, kernel_size=(5, 5), padding='same', kernel_initializer=initializers.TruncatedNormal(stddev=0.02))(G_h)))
-    G_h = Activation('relu')(BatchNormalization()(Convolution2D(256, kernel_size=(5, 5), padding='same', kernel_initializer=initializers.TruncatedNormal(stddev=0.02))(G_h)))
-    G_h = Activation('relu')(BatchNormalization()(Convolution2D(128, kernel_size=(5, 5), padding='same', kernel_initializer=initializers.TruncatedNormal(stddev=0.02))(G_h)))
-    G_h = Activation('relu')(BatchNormalization()(Convolution2D(64, kernel_size=(5, 5), padding='same', kernel_initializer=initializers.TruncatedNormal(stddev=0.02))(G_h)))
-    G_prob = Convolution2D(3, kernel_size=(3, 3), padding='same')(G_h)
+
+    G_h = Dense(gf_dim * 8 * s16 * s16)(inputs)
+    G_h = Activation('relu')(BatchNormalization()(Reshape(target_shape=[s16, s16, gf_dim * 8])(G_h)))
+    G_h = Activation('relu')(BatchNormalization()(Conv2DTranspose(gf_dim * 4, kernel_size=(5, 5), strides=(2, 2), padding='same')(G_h)))
+    G_h = Activation('relu')(BatchNormalization()(Conv2DTranspose(gf_dim * 2, kernel_size=(5, 5), strides=(2, 2), padding='same')(G_h)))
+    G_h = Activation('relu')(BatchNormalization()(Conv2DTranspose(gf_dim, kernel_size=(5, 5), strides=(2, 2), padding='same')(G_h)))
+    G_prob = Conv2DTranspose(c_dim, kernel_size=(5, 5), strides=(2, 2), padding='same', activation='sigmoid')(G_h)
 
     G = Model(inputs=[z_in, y_in], outputs=G_prob, name='Generator')
     print('=== Generator ===')
@@ -122,13 +127,11 @@ D_loss = D_loss_real + D_loss_fake
 G_loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=D_logit_fake, labels=tf.ones_like(D_logit_fake)))
 
 D_solver = tf.train.AdamOptimizer(learning_rate=0.0002, beta1=0.5).minimize(D_loss,  var_list=theta_D)
-G_solver = tf.train.AdamOptimizer(learning_rate=0.001, beta1=0.5).minimize(G_loss, var_list=theta_G)
+G_solver = tf.train.AdamOptimizer(learning_rate=0.0002, beta1=0.5).minimize(G_loss, var_list=theta_G)
 
 
 log_var = tf.Variable(0.0)
 tf.summary.scalar("loss", log_var)
-# tf.summary.scalar("D_loss", D_loss)
-# tf.summary.scalar("G_loss", G_loss)
 write_op = tf.summary.merge_all()
 
 with tf.device('/gpu:0'):
@@ -158,7 +161,7 @@ writer_2 = tf.summary.FileWriter(logs_path+'/G_loss', graph=tf.get_default_graph
 
 i = 0
 for it in range(100000):
-    if it % 100 == 0:
+    if it % 1000 == 0:
         n_sample = 16
         Z_sample = sample_Z(n_sample, Z_dim)
         y_sample = np.zeros(shape=[n_sample, y_dim])
@@ -178,7 +181,7 @@ for it in range(100000):
     _, D_loss_curr = sess.run([D_solver, D_loss], feed_dict={X: X_mb, Z: Z_sample, y: y_mb})
     _, G_loss_curr = sess.run([G_solver, G_loss], feed_dict={Z: Z_sample, y: y_mb})
 
-    if it % 100 == 0:
+    if it % 1000 == 0:
         summary = sess.run(write_op, {log_var: D_loss_curr})
         writer_1.add_summary(summary, it)
         writer_1.flush()
