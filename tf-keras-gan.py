@@ -1,5 +1,7 @@
 import matplotlib
 # Force matplotlib to not use any Xwindows backend.
+from datasets import load_data
+
 matplotlib.use('Agg')
 
 import tensorflow.contrib.keras.api.keras.backend as K
@@ -7,31 +9,28 @@ import tensorflow as tf
 from tensorflow.contrib.keras.python.keras import Input
 from tensorflow.contrib.keras.python.keras.datasets import cifar10
 from tensorflow.contrib.keras.python.keras.models import Model
-from tensorflow.contrib.keras.python.keras.layers import Dense, Activation, concatenate, Convolution2D, UpSampling2D, \
-    Flatten, Reshape, AveragePooling2D, add, initializers, Conv2DTranspose, LeakyReLU
+from tensorflow.contrib.keras.python.keras.layers import Dense, Activation, concatenate, Convolution2D, Flatten, Reshape, \
+    Conv2DTranspose, LeakyReLU
 from tensorflow.contrib.keras.python.keras.layers.normalization import BatchNormalization
 from tensorflow.contrib.keras.python.keras.preprocessing.image import ImageDataGenerator
 from tensorflow.contrib.keras.python.keras.utils import to_categorical
-from tensorflow.examples.tutorials.mnist import input_data
 import numpy as np
 
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 import os
 
-# mnist = input_data.read_data_sets('../../MNIST_data', one_hot=True)
+# (x_train, y_train), (x_test, y_test) = cifar10.load_data()
+x_train, y_train = load_data()
+X_dim = (128, 128, 3)
 
-(x_train, y_train), (x_test, y_test) = cifar10.load_data()
 mb_size = 64
 Z_dim = 64
-# X_dim = mnist.train.images.shape[1]
-X_dim = (32, 32, 3)
-# y_dim = mnist.train.labels.shape[1]
 y_dim = 10
 h_dim = 128
 
-x_train = x_train / 255.
-x_test = x_test / 255.
+# x_train = x_train / 255.
+# x_test = x_test / 255.
 
 logs_path = 'logs'
 if not os.path.isdir(logs_path):
@@ -49,6 +48,7 @@ def discriminator(X_dim, y_dim):
     x_in = Input(shape=(X_dim), name='X_input')
     y_in = Input(shape=(y_dim,), name='Y_input')
     D_h = LeakyReLU(0.2)(Convolution2D(df_dim, kernel_size=(5, 5), strides=(2, 2), padding='same')(x_in))
+    D_h = LeakyReLU(0.2)(BatchNormalization()(Convolution2D(df_dim*2, kernel_size=(5, 5), strides=(2, 2), padding='same')(D_h)))
     D_h = LeakyReLU(0.2)(BatchNormalization()(Convolution2D(df_dim*2, kernel_size=(5, 5), strides=(2, 2), padding='same')(D_h)))
     D_h = LeakyReLU(0.2)(BatchNormalization()(Convolution2D(df_dim*4, kernel_size=(5, 5), strides=(2, 2), padding='same')(D_h)))
     D_h = LeakyReLU(0.2)(BatchNormalization()(Convolution2D(df_dim*8, kernel_size=(5, 5), strides=(2, 2), padding='same')(D_h)))
@@ -75,6 +75,7 @@ def generator(Z_dim, y_dim, image_size=32):
     G_h = Activation('relu')(BatchNormalization()(Reshape(target_shape=[s16, s16, gf_dim * 8])(G_h)))
     G_h = Activation('relu')(BatchNormalization()(Conv2DTranspose(gf_dim * 4, kernel_size=(5, 5), strides=(2, 2), padding='same')(G_h)))
     G_h = Activation('relu')(BatchNormalization()(Conv2DTranspose(gf_dim * 2, kernel_size=(5, 5), strides=(2, 2), padding='same')(G_h)))
+    G_h = Activation('relu')(BatchNormalization()(Conv2DTranspose(gf_dim * 2, kernel_size=(5, 5), strides=(1, 1), padding='same')(G_h)))
     G_h = Activation('relu')(BatchNormalization()(Conv2DTranspose(gf_dim, kernel_size=(5, 5), strides=(2, 2), padding='same')(G_h)))
     G_prob = Conv2DTranspose(c_dim, kernel_size=(5, 5), strides=(2, 2), padding='same', activation='sigmoid')(G_h)
 
@@ -101,20 +102,20 @@ def plot(samples):
         ax.set_xticklabels([])
         ax.set_yticklabels([])
         ax.set_aspect('equal')
-        plt.imshow(sample.reshape(32, 32, 3), cmap='Greys_r')
+        plt.imshow(sample.reshape(X_dim[0], X_dim[1], X_dim[2]), cmap='Greys_r')
 
     return fig
 
 
 """ Input placeholders """
-X = tf.placeholder(tf.float32, shape=[None, 32, 32, 3])
+X = tf.placeholder(tf.float32, shape=[None, X_dim[0], X_dim[1], X_dim[2]])
 y = tf.placeholder(tf.float32, shape=[None, y_dim])
 Z = tf.placeholder(tf.float32, shape=[None, Z_dim])
 
 D_m = discriminator(X_dim, y_dim)
 theta_D = D_m.trainable_variables
 
-G_m = generator(Z_dim, y_dim)
+G_m = generator(Z_dim, y_dim, image_size=128)
 theta_G = G_m.trainable_variables
 
 G_sample = G_m([Z, y])
